@@ -9,10 +9,8 @@
 
 ## 演示视频
 
-<video width="800" controls>
-  <source src="doc/demo.mp4" type="video/mp4">
-  您的浏览器不支持视频播放，请<a href="doc/demo.mp4">点击这里下载视频</a>。
-</video>
+https://github.com/user-attachments/assets/0931bccd-b4e3-4c5b-b69b-22fa74f5e4f2
+
 
 ## 目录结构
 
