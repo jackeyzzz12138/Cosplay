@@ -81,7 +81,7 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition; // speech recognition API
     const hasRecognition = Boolean(SpeechRecognition);
     const hasSynthesis = typeof window.speechSynthesis !== 'undefined';
 
@@ -124,6 +124,7 @@ function App() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // TTS 函数
   const speakReply = (text, voice) => {
     if (!voiceSupportRef.current.synthesis || !text) {
       return;
@@ -172,7 +173,7 @@ function App() {
         const characterMessage = { sender: 'character', text: replyText };
         messagesRef.current = [...messagesRef.current, characterMessage];
         setMessages((prev) => [...prev, characterMessage]);
-        speakReply(replyText, data.voice);
+        speakReply(replyText, data.voice); // TTS语音参数
       }
     } catch (err) {
       console.error(err);
