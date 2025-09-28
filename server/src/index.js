@@ -3,6 +3,14 @@ import http from 'node:http';
 import os from 'node:os';
 import dotenv from 'dotenv';
 
+import {
+  deleteCharacter,
+  findCharacterById,
+  getCharacters,
+  initCharacterStore,
+  upsertCharacter
+} from './characterStore.js';
+
 // 从 .env 文件加载环境变量
 dotenv.config();
 
@@ -15,50 +23,7 @@ const OPENAI_BASE_URL = process.env.BASE_URL || process.env.OPENAI_BASE_URL || '
 const OPENAI_MODEL = process.env.MODEL || process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
 const OPENAI_API_KEY = process.env.API_KEY || process.env.OPENAI_API_KEY;
 
-/**
- * 角色配置数组 - 定义所有可用的AI角色及其特性
- * 每个角色包含：ID、姓名、问候语、性格、背景、说话技巧、语音参数等
- */
-const characters = [
-  {
-    id: 'harry-potter', // 角色唯一标识符
-    name: 'Harry Potter', // 显示名称
-    greeting: "Hello there! I'm Harry Potter. Looking for a bit of magic today?", // 默认问候语
-    personality: 'Brave, loyal, optimistic, slightly informal', // 性格特征
-    background:
-      'Wizard trained at Hogwarts. Known for courage, friendship, and a knack for getting into adventures.', // 背景故事
-    speakingTips: 'Use references to magic, Hogwarts, and friendships.', // AI对话提示
-    voice: {
-      pitch: 1.05, // 语音音调
-      rate: 1.05   // 语音语速
-    }
-  },
-  {
-    id: 'socrates',
-    name: 'Socrates',
-    greeting: 'Greetings. I am Socrates. Shall we examine the question together? ',
-    personality: 'Philosophical, inquisitive, calm, thought-provoking',
-    background:
-      'Classical Greek philosopher renowned for the Socratic method and a relentless pursuit of truth.',
-    speakingTips: 'Ask questions, encourage reflection, keep tone calm yet curious.',
-    voice: {
-      pitch: 0.95,
-      rate: 0.9
-    }
-  },
-  {
-    id: 'princess-moon',
-    name: 'Princess Moon',
-    greeting: 'Hi there! Princess Moon reporting for sparkle duty. Ready for some fun? ',
-    personality: 'Playful, bubbly, energetic, encouraging',
-    background: 'A fictional magical heroine who loves adventure and cheering up friends.',
-    speakingTips: 'Keep sentences upbeat, include whimsical imagery.',
-    voice: {
-      pitch: 1.2,
-      rate: 1.1
-    }
-  }
-];
+await initCharacterStore();
 
 /**
  * 设置跨域请求头
@@ -66,7 +31,7 @@ const characters = [
  */
 const allowCors = (res) => {
   res.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 };
 
@@ -230,8 +195,62 @@ const server = http.createServer(async (req, res) => {
 
     // API路由：获取所有角色列表
     if (method === 'GET' && parsedUrl.pathname === '/api/characters') {
-      sendJson(res, 200, { characters });
+      sendJson(res, 200, { characters: getCharacters() });
       return;
+    }
+
+    if (method === 'POST' && parsedUrl.pathname === '/api/characters') {
+      let payload;
+      try {
+        payload = await readRequestBody(req);
+      } catch (err) {
+        sendJson(res, 400, { error: 'Invalid JSON payload.' });
+        return;
+      }
+
+      try {
+        const created = await upsertCharacter(payload);
+        sendJson(res, 201, { character: created });
+      } catch (error) {
+        console.warn('[characters] create failed:', error.message);
+        sendJson(res, 400, { error: error.message || '创建角色失败。' });
+      }
+      return;
+    }
+
+    const characterIdMatch = parsedUrl.pathname.match(/^\/api\/characters\/(.+)$/);
+    if (characterIdMatch) {
+      const characterId = decodeURIComponent(characterIdMatch[1]);
+
+      if (method === 'PUT') {
+        let payload;
+        try {
+          payload = await readRequestBody(req);
+        } catch (err) {
+          sendJson(res, 400, { error: 'Invalid JSON payload.' });
+          return;
+        }
+
+        try {
+          const updated = await upsertCharacter(payload, characterId);
+          sendJson(res, 200, { character: updated });
+        } catch (error) {
+          console.warn('[characters] update failed:', error.message);
+          sendJson(res, 400, { error: error.message || '更新角色失败。' });
+        }
+        return;
+      }
+
+      if (method === 'DELETE') {
+        try {
+          await deleteCharacter(characterId);
+          sendJson(res, 204, {});
+        } catch (error) {
+          console.warn('[characters] delete failed:', error.message);
+          sendJson(res, 404, { error: error.message || '删除角色失败。' });
+        }
+        return;
+      }
     }
 
     // API路由：聊天接口 - 主要业务逻辑
@@ -245,8 +264,15 @@ const server = http.createServer(async (req, res) => {
       }
 
       const { characterId, message, history: rawHistory } = payload || {};
+      const characterList = getCharacters();
+
+      if (!characterList.length) {
+        sendJson(res, 500, { error: '尚未配置任何角色。' });
+        return;
+      }
+
       // 根据角色ID查找角色，如果找不到则使用第一个角色作为默认值
-      const character = characters.find((item) => item.id === characterId) || characters[0];
+      const character = findCharacterById(characterId) || characterList[0];
       const trimmedMessage = (message || '').toString().trim();
 
       // 验证必需参数

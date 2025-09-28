@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -24,6 +24,19 @@ const toChatHistory = (entries) =>
     content: item.text
   }));
 
+const createEmptyCharacterForm = () => ({
+  id: '',
+  name: '',
+  greeting: '',
+  personality: '',
+  background: '',
+  speakingTips: '',
+  voicePitch: '',
+  voiceRate: ''
+});
+
+const toInputValue = (value) => (value === undefined || value === null ? '' : String(value));
+
 function App() {
   const [characters, setCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(true);
@@ -34,6 +47,13 @@ function App() {
   const [isSending, setIsSending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [voiceSupport, setVoiceSupport] = useState({ recognition: false, synthesis: false });
+  const [isManaging, setIsManaging] = useState(false);
+  const [managementForm, setManagementForm] = useState(createEmptyCharacterForm);
+  const [editingCharacterId, setEditingCharacterId] = useState('');
+  const [managementError, setManagementError] = useState('');
+  const [managementNotice, setManagementNotice] = useState('');
+  const [isSavingCharacter, setIsSavingCharacter] = useState(false);
+  const [deletingCharacterId, setDeletingCharacterId] = useState('');
 
   const recognitionRef = useRef(null);
   const messagesRef = useRef([]);
@@ -41,26 +61,42 @@ function App() {
   const voiceSupportRef = useRef({ recognition: false, synthesis: false });
   const messageListRef = useRef(null);
 
-  useEffect(() => {
-    const loadCharacters = async () => {
-      try {
-        setLoadingCharacters(true);
-        const response = await fetch(`${API_BASE_URL}/api/characters`);
-        if (!response.ok) {
-          throw new Error(`加载角色失败：${response.status}`);
-        }
-        const data = await response.json();
-        setCharacters(data.characters || []);
-      } catch (err) {
-        console.error(err);
-        setError('获取角色列表失败，请稍后重试。');
-      } finally {
-        setLoadingCharacters(false);
+  const loadCharacters = useCallback(async () => {
+    try {
+      setLoadingCharacters(true);
+      const response = await fetch(`${API_BASE_URL}/api/characters`);
+      if (!response.ok) {
+        throw new Error(`加载角色失败：${response.status}`);
       }
-    };
+      const data = await response.json();
+      const list = data.characters || [];
+      setCharacters(list);
 
-    loadCharacters();
-  }, []);
+      const currentId = selectedCharacterRef.current?.id;
+      if (currentId) {
+        const updated = list.find((item) => item.id === currentId);
+        if (updated) {
+          setSelectedCharacter(updated);
+        } else {
+          setSelectedCharacter(null);
+          messagesRef.current = [];
+          setMessages([]);
+        }
+      }
+
+      return list;
+    } catch (err) {
+      console.error(err);
+      setError('获取角色列表失败，请稍后重试。');
+      throw err;
+    } finally {
+      setLoadingCharacters(false);
+    }
+  }, [messagesRef, selectedCharacterRef]);
+
+  useEffect(() => {
+    loadCharacters().catch(() => {});
+  }, [loadCharacters]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -192,6 +228,196 @@ function App() {
     setMessages(history);
   };
 
+  const handleToggleManagement = () => {
+    setIsManaging((prev) => {
+      const next = !prev;
+      if (!next) {
+        setEditingCharacterId('');
+        setManagementForm(createEmptyCharacterForm());
+      }
+      return next;
+    });
+    setManagementError('');
+    setManagementNotice('');
+  };
+
+  const startCreateCharacter = () => {
+    setIsManaging(true);
+    setEditingCharacterId('');
+    setManagementForm(createEmptyCharacterForm());
+    setManagementError('');
+    setManagementNotice('');
+  };
+
+  const handleManagementChange = (field) => (event) => {
+    const value = event.target.value;
+    setManagementForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const openEditCharacter = (character) => {
+    setIsManaging(true);
+    setEditingCharacterId(character.id);
+    setManagementForm({
+      id: character.id || '',
+      name: character.name || '',
+      greeting: character.greeting || '',
+      personality: character.personality || '',
+      background: character.background || '',
+      speakingTips: character.speakingTips || '',
+      voicePitch: toInputValue(character.voice?.pitch),
+      voiceRate: toInputValue(character.voice?.rate)
+    });
+    setManagementError('');
+    setManagementNotice('');
+  };
+
+  const submitManagementForm = async (event) => {
+    event.preventDefault();
+    const trimmedName = managementForm.name.trim();
+    const trimmedGreeting = managementForm.greeting.trim();
+
+    if (!trimmedName || !trimmedGreeting) {
+      setManagementError('角色名称和问候语为必填项。');
+      return;
+    }
+
+    const parseNumericField = (value) => {
+      if (value === undefined || value === null || value === '') {
+        return undefined;
+      }
+      const num = Number(value);
+      if (!Number.isFinite(num)) {
+        throw new Error('字段需要填写数字');
+      }
+      return num;
+    };
+
+    let pitch;
+    let rate;
+    try {
+      pitch = parseNumericField(managementForm.voicePitch);
+      rate = parseNumericField(managementForm.voiceRate);
+    } catch (err) {
+      setManagementError('语音音调与语速需要填写数字。');
+      return;
+    }
+
+    const payload = {
+      name: trimmedName,
+      greeting: trimmedGreeting,
+      personality: managementForm.personality.trim(),
+      background: managementForm.background.trim(),
+      speakingTips: managementForm.speakingTips.trim(),
+      voice: {}
+    };
+
+    if (pitch !== undefined) {
+      payload.voice.pitch = pitch;
+    }
+    if (rate !== undefined) {
+      payload.voice.rate = rate;
+    }
+    if (!Object.keys(payload.voice).length) {
+      delete payload.voice;
+    }
+
+    if (!editingCharacterId && managementForm.id.trim()) {
+      payload.id = managementForm.id.trim();
+    }
+
+    setIsSavingCharacter(true);
+    setManagementError('');
+    setManagementNotice('');
+
+    try {
+      const endpoint = editingCharacterId
+        ? `${API_BASE_URL}/api/characters/${encodeURIComponent(editingCharacterId)}`
+        : `${API_BASE_URL}/api/characters`;
+      const method = editingCharacterId ? 'PUT' : 'POST';
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const message = errorBody.error || '保存角色失败，请稍后重试。';
+        throw new Error(message);
+      }
+
+      const data = await response.json();
+      const savedCharacter = data.character;
+      await loadCharacters();
+
+      setManagementNotice(editingCharacterId ? '角色已更新。' : '角色已新增。');
+      setManagementForm({
+        id: savedCharacter.id || '',
+        name: savedCharacter.name || '',
+        greeting: savedCharacter.greeting || '',
+        personality: savedCharacter.personality || '',
+        background: savedCharacter.background || '',
+        speakingTips: savedCharacter.speakingTips || '',
+        voicePitch: toInputValue(savedCharacter.voice?.pitch),
+        voiceRate: toInputValue(savedCharacter.voice?.rate)
+      });
+      setEditingCharacterId(savedCharacter.id);
+
+      if (!editingCharacterId || selectedCharacterRef.current?.id === savedCharacter.id) {
+        handleSelectCharacter(savedCharacter);
+      }
+    } catch (err) {
+      console.error(err);
+      setManagementError(err.message || '保存角色失败，请稍后重试。');
+    } finally {
+      setIsSavingCharacter(false);
+    }
+  };
+
+  const removeCharacter = async (character) => {
+    if (!window.confirm(`确定要删除「${character.name}」吗？`)) {
+      return;
+    }
+
+    setManagementError('');
+    setManagementNotice('');
+    setDeletingCharacterId(character.id);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/characters/${encodeURIComponent(character.id)}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const message = errorBody.error || '删除角色失败，请稍后重试。';
+        throw new Error(message);
+      }
+
+      await loadCharacters();
+
+      if (editingCharacterId === character.id) {
+        setEditingCharacterId('');
+        setManagementForm(createEmptyCharacterForm());
+      }
+
+      if (selectedCharacterRef.current?.id === character.id) {
+        setSelectedCharacter(null);
+        messagesRef.current = [];
+        setMessages([]);
+      }
+
+      setManagementNotice('角色已删除。');
+    } catch (err) {
+      console.error(err);
+      setManagementError(err.message || '删除角色失败，请稍后重试。');
+    } finally {
+      setDeletingCharacterId('');
+    }
+  };
+
   const handleSubmit = (event) => {
     event.preventDefault();
     const trimmed = inputValue.trim();
@@ -233,13 +459,19 @@ function App() {
   return (
     <div className="app-shell">
       <header>
-        <h1>Cosplay Voice Chat MVP</h1>
+        <h1>Cosplay Voice Chat</h1>
         <p className="subtitle">选择角色并开启语音对话体验</p>
       </header>
 
       <main className="layout">
         <section className="characters-panel">
-          <h2>选择角色</h2>
+          <div className="panel-header">
+            <h2>选择角色</h2>
+            <button className="toggle-management" type="button" onClick={handleToggleManagement}>
+              {isManaging ? '关闭管理' : '管理角色'}
+            </button>
+          </div>
+
           <div className="character-grid">
             {loadingCharacters && <div className="placeholder">正在加载角色...</div>}
             {!loadingCharacters && !characters.length && <div className="placeholder">暂无角色可用</div>}
@@ -257,6 +489,134 @@ function App() {
                 </button>
               ))}
           </div>
+
+          {isManaging && (
+            <div className="character-management">
+              <div className="management-header">
+                <h3>{editingCharacterId ? '编辑角色' : '新增角色'}</h3>
+                <button type="button" className="secondary" onClick={startCreateCharacter}>
+                  新增角色
+                </button>
+              </div>
+
+              {managementError && <div className="management-message error">{managementError}</div>}
+              {managementNotice && <div className="management-message notice">{managementNotice}</div>}
+
+              <form className="management-form" onSubmit={submitManagementForm}>
+                <div className="form-grid">
+                  <label className="field">
+                    <span>角色名称 *</span>
+                    <input
+                      type="text"
+                      value={managementForm.name}
+                      onChange={handleManagementChange('name')}
+                      placeholder="如：Sherlock Holmes"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>角色 ID</span>
+                    <input
+                      type="text"
+                      value={managementForm.id}
+                      onChange={handleManagementChange('id')}
+                      placeholder="留空将自动生成"
+                      disabled={Boolean(editingCharacterId)}
+                    />
+                  </label>
+                  <label className="field full">
+                    <span>问候语 *</span>
+                    <textarea
+                      value={managementForm.greeting}
+                      onChange={handleManagementChange('greeting')}
+                      rows={2}
+                      placeholder="例如：很高兴见到你，准备好探险了吗？"
+                    />
+                  </label>
+                  <label className="field full">
+                    <span>角色背景</span>
+                    <textarea
+                      value={managementForm.background}
+                      onChange={handleManagementChange('background')}
+                      rows={3}
+                      placeholder="可描述角色的身份、历史等"
+                    />
+                  </label>
+                  <label className="field full">
+                    <span>性格特点</span>
+                    <input
+                      type="text"
+                      value={managementForm.personality}
+                      onChange={handleManagementChange('personality')}
+                      placeholder="如：机智、冷静、善于分析"
+                    />
+                  </label>
+                  <label className="field full">
+                    <span>对话提示</span>
+                    <textarea
+                      value={managementForm.speakingTips}
+                      onChange={handleManagementChange('speakingTips')}
+                      rows={2}
+                      placeholder="提示 AI 如何回复，例如：多使用古典语言"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>语音音调</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={managementForm.voicePitch}
+                      onChange={handleManagementChange('voicePitch')}
+                      placeholder="如：1.05"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>语速</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={managementForm.voiceRate}
+                      onChange={handleManagementChange('voiceRate')}
+                      placeholder="如：0.95"
+                    />
+                  </label>
+                </div>
+                <div className="management-actions">
+                  <button type="submit" className="primary" disabled={isSavingCharacter}>
+                    {isSavingCharacter ? '保存中...' : '保存角色'}
+                  </button>
+                </div>
+              </form>
+
+              <div className="management-list">
+                <h4>已有角色</h4>
+                {!characters.length && <div className="placeholder">暂无角色，请先新增。</div>}
+                {characters.map((character) => (
+                  <div
+                    key={`manage-${character.id}`}
+                    className={`management-item ${editingCharacterId === character.id ? 'active' : ''}`}
+                  >
+                    <div className="info">
+                      <strong>{character.name}</strong>
+                      <span>ID：{character.id}</span>
+                    </div>
+                    <div className="actions">
+                      <button type="button" onClick={() => openEditCharacter(character)}>
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => removeCharacter(character)}
+                        disabled={deletingCharacterId === character.id}
+                      >
+                        {deletingCharacterId === character.id ? '删除中...' : '删除'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="chat-panel">

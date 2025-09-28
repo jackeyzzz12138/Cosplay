@@ -1,4 +1,4 @@
-# Cosplay Voice Chat MVP
+# Cosplay Voice Chat
 
 根据 `doc/design.md` 的路线图实现的最小可行产品（MVP）。项目分为前端（React + Vite）和后端（Node.js HTTP 服务），展示以下核心功能：
 
@@ -6,6 +6,13 @@
 - 对话体验：用户可以通过文本或语音输入与所选角色对话，并查看完整聊天记录。
 - 语音识别与合成：前端使用浏览器 `Web Speech API` 获取语音输入并播放角色语音回复。
 - GPT 集成：后端可选接入 OpenAI Chat Completions 接口（提供 `OPENAI_API_KEY` 时启用），否则采用脚本化回复用于演示。
+
+## 演示视频
+
+<video width="800" controls>
+  <source src="doc/demo.mp4" type="video/mp4">
+  您的浏览器不支持视频播放，请<a href="doc/demo.mp4">点击这里下载视频</a>。
+</video>
 
 ## 目录结构
 
@@ -68,7 +75,7 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 ## 后续迭代方向
 
 - 在后端引入真正的 WebSocket / Socket.IO，实现更实时的语音流式体验。
-- 增加角色管理界面以及持久化存储。
+- ~~增加角色管理界面以及持久化存储。~~
 - 优化语音识别效果（多语言支持、噪声抑制等）。
 - 增加单元测试与端到端测试，覆盖核心对话流程。
 
